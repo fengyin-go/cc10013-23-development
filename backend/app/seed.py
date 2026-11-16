@@ -653,3 +653,252 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '加密开关': '数据导出样例3',
   '完整性校验': '数据导出样例3'}]
 }
+
+
+# ---------------------------------------------------------------------------
+# 指标联合窗口示例数据：采集指标样本、联合窗口、指标待办队列
+# 阈值口径：成功率不低于阈值为正常；延迟、错误率不高于阈值为正常。
+# ---------------------------------------------------------------------------
+def _metric_sample(  # noqa: PLR0913
+    sample_id: int,
+    metric_id: str,
+    endpoint: str,
+    time_window: str,
+    metric_type: str,
+    value: float,
+    threshold: float,
+    judge: str,
+    batch: str,
+    *,
+    late: bool = False,
+    collected_at: str | None = None,
+) -> dict[str, Any]:
+    return {
+        'id': sample_id,
+        '样本编号': f'SMP-{sample_id:04d}',
+        '指标编号': metric_id,
+        '关联端点': endpoint,
+        '时间窗': time_window,
+        '指标类型': metric_type,
+        '样本值': value,
+        '阈值': threshold,
+        '判定': judge,
+        '到达批次': batch,
+        '是否迟到': late,
+        '采集时间': collected_at or f'{time_window}:00',
+        '异常标记': judge == '超限',
+    }
+
+
+def _version_record(  # noqa: PLR0913
+    window: dict[str, Any], samples: list[dict[str, Any]], source: str, version: str
+) -> dict[str, Any]:
+    return {
+        '来源': source,
+        '判定版本': version,
+        '联合结论': window['联合结论'],
+        '异常项': list(window['异常项']),
+        '结论说明': window['结论说明'],
+        '样本引用': {s['指标类型']: s['样本编号'] for s in samples},
+        '样本快照': [dict(sample) for sample in samples],
+        '依据时间': window['更新时间'],
+    }
+
+
+def _metric_window(  # noqa: PLR0913
+    window_id: int,
+    metric_id: str,
+    endpoint: str,
+    time_window: str,
+    status: str,
+    conclusion: str,
+    abnormal_items: list[str],
+    explain: str,
+    samples: list[dict[str, Any]],
+    *,
+    all_samples: list[dict[str, Any]] | None = None,
+    version: str = 'v1',
+    conflict: str | None = None,
+    extra_versions: list[dict[str, Any]] | None = None,
+    created_at: str | None = None,
+    updated_at: str | None = None,
+) -> dict[str, Any]:
+    created = created_at or f'{time_window}:05'
+    updated = updated_at or created
+    effective_all = all_samples or samples
+    window = {
+        'id': window_id,
+        '窗口编号': f"MW-{metric_id}-{time_window.replace(' ', '').replace(':', '').replace('-', '')}",
+        '指标编号': metric_id,
+        '关联端点': endpoint,
+        '时间窗': time_window,
+        '状态': status,
+        '判定版本': version,
+        '联合结论': conclusion,
+        '异常项': list(abnormal_items),
+        '结论说明': explain,
+        '样本引用': {s['指标类型']: s['样本编号'] for s in samples},
+        '全部样本': [s['样本编号'] for s in effective_all],
+        '发布快照': None,
+        '版本记录': [],
+        '冲突说明': conflict,
+        'pending': status != '终态裁决',
+        'abnormal': conclusion == '异常',
+        '创建时间': created,
+        '更新时间': updated,
+    }
+    first = _version_record(window, samples, '发布', 'v1')
+    window['发布快照'] = dict(first)
+    window['版本记录'] = [first]
+    if extra_versions:
+        window['版本记录'].extend(extra_versions)
+    return window
+
+
+_metric_samples: list[dict[str, Any]] = [
+    # W1：三项全部正常
+    _metric_sample(1, 'MONI-0001', 'ENDP-0001', '2026-11-16 09:00', '成功率', 99.2, 99.0, '正常', 'B-0900'),
+    _metric_sample(2, 'MONI-0001', 'ENDP-0001', '2026-11-16 09:00', '延迟', 120.0, 200.0, '正常', 'B-0900'),
+    _metric_sample(3, 'MONI-0001', 'ENDP-0001', '2026-11-16 09:00', '错误率', 0.4, 1.0, '正常', 'B-0900'),
+    # W2：成功率正常、延迟超限、错误率恢复（复测演示窗）
+    _metric_sample(4, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:05', '成功率', 99.5, 99.0, '正常', 'B-0905'),
+    _metric_sample(5, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:05', '延迟', 356.0, 200.0, '超限', 'B-0905'),
+    _metric_sample(6, 'MONI-0002', 'ENDP-0002', '2026-11-16 08:55', '错误率', 2.6, 1.0, '超限', 'B-0855'),
+    _metric_sample(7, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:05', '错误率', 0.8, 1.0, '恢复', 'B-0905'),
+    # W3：三项全部正常
+    _metric_sample(8, 'MONI-0003', 'ENDP-0003', '2026-11-16 09:10', '成功率', 99.8, 99.0, '正常', 'B-0910'),
+    _metric_sample(9, 'MONI-0003', 'ENDP-0003', '2026-11-16 09:10', '延迟', 96.0, 200.0, '正常', 'B-0910'),
+    _metric_sample(10, 'MONI-0003', 'ENDP-0003', '2026-11-16 09:10', '错误率', 0.2, 1.0, '正常', 'B-0910'),
+    # W4：错误率单指标超限
+    _metric_sample(11, 'MONI-0001', 'ENDP-0001', '2026-11-16 09:15', '成功率', 99.3, 99.0, '正常', 'B-0915'),
+    _metric_sample(12, 'MONI-0001', 'ENDP-0001', '2026-11-16 09:15', '延迟', 158.0, 200.0, '正常', 'B-0915'),
+    _metric_sample(13, 'MONI-0001', 'ENDP-0001', '2026-11-16 09:15', '错误率', 1.7, 1.0, '超限', 'B-0915'),
+    # W5：发布后迟到样本形成冲突，待裁决
+    _metric_sample(14, 'MONI-0004', 'ENDP-0004', '2026-11-16 09:20', '成功率', 99.4, 99.0, '正常', 'B-0920'),
+    _metric_sample(15, 'MONI-0004', 'ENDP-0004', '2026-11-16 09:20', '延迟', 142.0, 200.0, '正常', 'B-0920'),
+    _metric_sample(16, 'MONI-0004', 'ENDP-0004', '2026-11-16 09:20', '错误率', 0.6, 1.0, '正常', 'B-0920'),
+    _metric_sample(17, 'MONI-0004', 'ENDP-0004', '2026-11-16 09:20', '延迟', 268.0, 200.0, '超限', 'B-0930',
+                   late=True, collected_at='2026-11-16 09:28:40'),
+    # W6：迟到冲突已裁决，采纳更正，终态保留一个结论
+    _metric_sample(18, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:25', '成功率', 99.1, 99.0, '正常', 'B-0925'),
+    _metric_sample(19, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:25', '延迟', 180.0, 200.0, '正常', 'B-0925'),
+    _metric_sample(20, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:25', '错误率', 0.5, 1.0, '正常', 'B-0925'),
+    _metric_sample(21, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:25', '错误率', 1.9, 1.0, '超限', 'B-0940',
+                   late=True, collected_at='2026-11-16 09:33:10'),
+]
+
+
+def _explain(samples: list[dict[str, Any]], abnormal_items: list[str]) -> str:
+    parts = [
+        f"{s['指标类型']}{s['判定']}（实测 {s['样本值']}，阈值 {s['阈值']}，样本 {s['样本编号']}）"
+        for s in samples
+    ]
+    text = '联合判定：' + '；'.join(parts)
+    text += (
+        f"。异常项：{'、'.join(abnormal_items)}"
+        if abnormal_items
+        else '。三项指标均在阈值内。'
+    )
+    return text
+
+
+_w2_samples = [_metric_samples[3], _metric_samples[4], _metric_samples[6]]
+_w2 = _metric_window(
+    1, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:05', '已发布', '异常', ['延迟'],
+    _explain(_w2_samples, ['延迟']), _w2_samples, version='v2',
+    created_at='2026-11-16 09:05:10', updated_at='2026-11-16 09:12:30',
+)
+_w2['版本记录'].append(_version_record(_w2, _w2_samples, '复测', 'v2'))
+
+_w5_published = [_metric_samples[13], _metric_samples[14], _metric_samples[15]]
+_w5_all = [_metric_samples[13], _metric_samples[14], _metric_samples[15], _metric_samples[16]]
+_w5 = _metric_window(
+    2, 'MONI-0004', 'ENDP-0004', '2026-11-16 09:20', '已发布', '正常', [],
+    _explain(_w5_published, []), _w5_published, all_samples=_w5_all,
+    conflict='迟到样本 SMP-0017（延迟）于结论发布后到达：原结论「正常」，若采纳更正将变为「异常」，需裁决。',
+    created_at='2026-11-16 09:20:10', updated_at='2026-11-16 09:29:00',
+)
+
+# W6 生效引用已替换为迟到错误率样本；原准时样本仍保留在全部样本里可回溯。
+_w6_published = [_metric_samples[17], _metric_samples[18], _metric_samples[19]]
+_w6_current = [_metric_samples[17], _metric_samples[18], _metric_samples[20]]
+_w6_all = [_metric_samples[17], _metric_samples[18], _metric_samples[19], _metric_samples[20]]
+_w6 = _metric_window(
+    3, 'MONI-0002', 'ENDP-0002', '2026-11-16 09:25', '终态裁决', '异常', ['错误率'],
+    _explain(_w6_current, ['错误率']), _w6_current, all_samples=_w6_all, version='v2',
+    created_at='2026-11-16 09:25:10', updated_at='2026-11-16 09:35:20',
+)
+_w6['版本记录'].append(_version_record(_w6, _w6_current, '裁决-采纳更正', 'v2'))
+
+_metric_windows: list[dict[str, Any]] = [
+    _metric_window(
+        4, 'MONI-0001', 'ENDP-0001', '2026-11-16 09:00', '已发布', '正常', [],
+        _explain(_metric_samples[0:3], []), _metric_samples[0:3],
+        created_at='2026-11-16 09:00:10',
+    ),
+    _w2,
+    _metric_window(
+        5, 'MONI-0003', 'ENDP-0003', '2026-11-16 09:10', '已发布', '正常', [],
+        _explain(_metric_samples[7:10], []), _metric_samples[7:10],
+        created_at='2026-11-16 09:10:10',
+    ),
+    _metric_window(
+        6, 'MONI-0001', 'ENDP-0001', '2026-11-16 09:15', '已发布', '异常', ['错误率'],
+        _explain(_metric_samples[10:13], ['错误率']), _metric_samples[10:13],
+        created_at='2026-11-16 09:15:10',
+    ),
+    _w5,
+    _w6,
+]
+
+_w5_conflict = {
+    '迟到样本': 'SMP-0017', '指标类型': '延迟', '原结论': '正常',
+    '候选更正结论': '异常', '候选异常项': ['延迟'],
+    '候选说明': _explain([_metric_samples[13], _metric_samples[16], _metric_samples[15]], ['延迟']),
+    '发现时间': '2026-11-16 09:29:00',
+}
+_w6_conflict = {
+    '迟到样本': 'SMP-0021', '指标类型': '错误率', '原结论': '正常',
+    '候选更正结论': '异常', '候选异常项': ['错误率'],
+    '候选说明': _explain(_w6_current, ['错误率']),
+    '发现时间': '2026-11-16 09:33:30',
+}
+
+_metric_todos: list[dict[str, Any]] = [
+    {
+        'id': 1, '待办编号': 'TODO-0001', '窗口编号': _w2['窗口编号'], '窗口ID': _w2['id'],
+        '指标编号': 'MONI-0002', '关联端点': 'ENDP-0002', '时间窗': '2026-11-16 09:05',
+        '待办类型': '异常窗口', '优先级': '高', '状态': '待处理', '判定版本': 'v2',
+        '指标结果摘要': _w2['结论说明'], '冲突列表': [], '冲突替换': {},
+        '处理方式': None, '处理时间': None, 'pending': True, 'abnormal': True,
+    },
+    {
+        'id': 2, '待办编号': 'TODO-0002', '窗口编号': _w5['窗口编号'], '窗口ID': _w5['id'],
+        '指标编号': 'MONI-0004', '关联端点': 'ENDP-0004', '时间窗': '2026-11-16 09:20',
+        '待办类型': '迟到裁决', '优先级': '高', '状态': '待处理', '判定版本': 'v1',
+        '指标结果摘要': _w5['冲突说明'],
+        '冲突列表': [_w5_conflict], '冲突替换': {'延迟': 'SMP-0017'},
+        '处理方式': None, '处理时间': None, 'pending': True, 'abnormal': True,
+    },
+    {
+        'id': 3, '待办编号': 'TODO-0003',
+        '窗口编号': _metric_windows[3]['窗口编号'], '窗口ID': _metric_windows[3]['id'],
+        '指标编号': 'MONI-0001', '关联端点': 'ENDP-0001', '时间窗': '2026-11-16 09:15',
+        '待办类型': '异常窗口', '优先级': '中', '状态': '待处理', '判定版本': 'v1',
+        '指标结果摘要': _metric_windows[3]['结论说明'], '冲突列表': [], '冲突替换': {},
+        '处理方式': None, '处理时间': None, 'pending': True, 'abnormal': True,
+    },
+    {
+        'id': 4, '待办编号': 'TODO-0004', '窗口编号': _w6['窗口编号'], '窗口ID': _w6['id'],
+        '指标编号': 'MONI-0002', '关联端点': 'ENDP-0002', '时间窗': '2026-11-16 09:25',
+        '待办类型': '迟到裁决', '优先级': '高', '状态': '已处理', '判定版本': 'v2',
+        '指标结果摘要': '迟到样本 SMP-0021（错误率）已裁决：采纳更正，结论由「正常」更正为「异常」。',
+        '冲突列表': [_w6_conflict], '冲突替换': {'错误率': 'SMP-0021'},
+        '处理方式': '采纳更正', '处理时间': '2026-11-16 09:35:20',
+        'pending': False, 'abnormal': True,
+    },
+]
+
+SEED_ROWS['metric_sample'] = _metric_samples
+SEED_ROWS['metric_window'] = _metric_windows
+SEED_ROWS['metric_todo'] = _metric_todos
